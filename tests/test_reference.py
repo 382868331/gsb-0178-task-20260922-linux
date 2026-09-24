@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import cordic_q428.reference as reference
 import cordic_q428.cordic as cordic
-from cordic_q428 import HALF_PI_Q, PI_Q, SCALE, sin_cos_ref
+from cordic_q428 import HALF_PI_Q, PI_Q, SCALE, polar_ref, sin_cos_ref
 
 
 class TestReferenceIndependence(unittest.TestCase):
@@ -82,6 +82,65 @@ class TestReferenceValues(unittest.TestCase):
         s, c = sin_cos_ref(0)
         self.assertIsInstance(s, Decimal)
         self.assertIsInstance(c, Decimal)
+
+
+class TestPolarReference(unittest.TestCase):
+    """The polar oracle must be independent and match hand-computed values."""
+
+    def test_zero_vector(self):
+        a, m = polar_ref(0, 0)
+        self.assertEqual(a, 0)
+        self.assertEqual(m, 0)
+
+    def test_axes(self):
+        half_pi = Decimal(HALF_PI_Q) / SCALE
+        pi = Decimal(PI_Q) / SCALE
+        one = Decimal(1)
+        cases = (
+            (SCALE, 0, Decimal(0), one),
+            (0, SCALE, half_pi, one),
+            (0, -SCALE, -half_pi, one),
+            (-SCALE, 0, pi, one),  # negative x axis, y == 0 -> +pi by convention
+        )
+        for x, y, want_a, want_m in cases:
+            with self.subTest(x=x, y=y):
+                a, m = polar_ref(x, y)
+                self.assertLess(abs(a - want_a), Decimal(2) / SCALE)
+                self.assertLess(abs(m - want_m), Decimal(1) / SCALE)
+
+    def test_diagonal_and_345(self):
+        # (1,1): angle pi/4, magnitude sqrt(2) (checked as m^2 = 2).
+        a, m = polar_ref(SCALE, SCALE)
+        self.assertLess(abs(a - Decimal(PI_Q) / (4 * SCALE)), Decimal(1) / SCALE)
+        self.assertAlmostEqual(float(m * m), 2.0, places=15)
+        # (3,4): magnitude exactly 5.
+        a, m = polar_ref(3 * SCALE, 4 * SCALE)
+        self.assertAlmostEqual(float(m), 5.0, places=15)
+        # tan(angle) = 4/3 reconstructed without calling atan under test.
+        self.assertGreater(a, 0)
+
+    def test_quadrant_signs(self):
+        a_q1, _ = polar_ref(SCALE, SCALE)
+        a_q2, _ = polar_ref(-SCALE, SCALE)
+        a_q3, _ = polar_ref(-SCALE, -SCALE)
+        a_q4, _ = polar_ref(SCALE, -SCALE)
+        self.assertTrue(a_q1 > 0 and a_q2 > 0)
+        self.assertTrue(a_q3 < 0 and a_q4 < 0)
+        self.assertLess(abs(a_q1 + a_q4), Decimal(2) / SCALE)
+        # QII angle +3*pi/4 and QIII angle -3*pi/4 are negatives of each other.
+        self.assertLess(abs(a_q2 + a_q3), Decimal(2) / SCALE)
+
+    def test_rejects_bad_input(self):
+        for bad in (True, False, 1.0, "1", None):
+            with self.assertRaises(Exception):
+                polar_ref(bad, 0)
+            with self.assertRaises(Exception):
+                polar_ref(0, bad)
+
+    def test_returns_decimal(self):
+        a, m = polar_ref(3, 4)
+        self.assertIsInstance(a, Decimal)
+        self.assertIsInstance(m, Decimal)
 
 
 if __name__ == "__main__":

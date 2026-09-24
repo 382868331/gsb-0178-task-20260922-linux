@@ -18,6 +18,7 @@ from cordic_q428 import (
     InvalidArgumentTypeError,
     NonFiniteValueError,
     float_to_q,
+    mul_q,
     q_to_float,
     sar,
     sin_cos,
@@ -103,6 +104,37 @@ class TestShiftAndQuantization(unittest.TestCase):
     def test_roundtrip_q_float(self):
         for q in (0, 1, -1, INT32_MAX, INT32_MIN, 123456789):
             self.assertEqual(float_to_q(q_to_float(q)), q)
+
+    def test_mul_q_basic(self):
+        # Q4.28 product: (a * b) >> 28 with ties-to-even.
+        self.assertEqual(mul_q(SCALE, SCALE), SCALE)          # 1.0 * 1.0 = 1.0
+        self.assertEqual(mul_q(SCALE, 0), 0)
+        self.assertEqual(mul_q(2 * SCALE, 3 * SCALE), 6 * SCALE)
+        # Sign handling.
+        self.assertEqual(mul_q(SCALE, -SCALE), -SCALE)
+        self.assertEqual(mul_q(-SCALE, -SCALE), SCALE)
+
+    def test_mul_q_ties_to_even(self):
+        # Build an exact 0.5-ulp tie: (SCALE+1)/2 * 2 = SCALE+1, so multiply
+        # (SCALE+1) by 2*... easier: a*b with fractional part exactly 0.5.
+        # (SCALE + 1) * (SCALE // 2) has remainder SCALE//2 exactly when the
+        # +1 term contributes 0.5 ulp; check the even quotient is chosen.
+        half = SCALE // 2
+        # (SCALE+1)*half = half*SCALE + half -> quotient half, remainder half
+        # (an exact tie): half=2**27 is even, so it stays half (round to even).
+        self.assertEqual(mul_q(SCALE + 1, half), half)
+        # Odd quotient tie: (SCALE+1)*(half+1) -> quotient half+1, remainder
+        # half + 1 ... verify sign-correctness on a clean negative tie instead.
+        # -(SCALE+1) * half: Python divmod keeps remainder positive; quotient is
+        # -(half+1), remainder half -> tie rounds to the even quotient -half.
+        self.assertEqual(mul_q(-(SCALE + 1), half), -half)
+
+    def test_mul_q_rejects_bool_and_non_int(self):
+        for bad in (True, False, 1.0, "1"):
+            with self.assertRaises(InvalidArgumentTypeError):
+                mul_q(bad, SCALE)
+            with self.assertRaises(InvalidArgumentTypeError):
+                mul_q(SCALE, bad)
 
     def test_table_is_ties_to_even_quantized(self):
         # atan(2**-29) * 2**28 = 0.5 exactly-ish; ties-to-even gives 0.

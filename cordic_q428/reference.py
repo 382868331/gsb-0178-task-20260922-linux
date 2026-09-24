@@ -7,7 +7,10 @@ Taylor series at 60-digit precision.  It never calls the CORDIC core, and the
 core never calls it except to *report* the error against it.
 
 Interface: :func:`sin_cos_ref` takes a Q4.28 integer angle and returns
-``(sin, cos)`` as :class:`~decimal.Decimal` values.
+``(sin, cos)`` as :class:`~decimal.Decimal` values.  :func:`polar_ref` takes
+two Q4.28 integers ``(x, y)`` and returns ``(atan2(y, x), hypot(x, y))`` as
+Decimals in real units (radians and the Q4.28 real scale), derived
+independently with a Decimal atan series and a Decimal square root.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from decimal import Decimal, localcontext
 
 from .errors import InvalidArgumentTypeError
 from .fixedpoint import INT32_MAX, INT32_MIN, SCALE, require_int
-from .tables import PI_DEC
+from .tables import PI_DEC, _atan_series
 
 _REF_PREC: int = 60
 _TWO_PI_DEC = PI_DEC * 2
@@ -72,3 +75,62 @@ def sin_cos_ref(angle_q: int) -> tuple[Decimal, Decimal]:
         angle = Decimal(angle_q) / SCALE
         reduced = _reduce_to_pi(angle)
         return _taylor_sin_cos(reduced, _REF_PREC)
+
+
+def _atan_decimal(t: Decimal, prec: int) -> Decimal:
+    """atan(t) for t >= 0, with the Taylor argument always reduced to <= a.
+
+    The plain atan Taylor series converges like ``arg**(2k)``; at an argument
+    near 1 (a vector near a 45-degree diagonal) that needs millions of terms.
+    Two angle identities keep the series argument in ``[0, a]`` where
+    ``a = tan(pi/8) = sqrt(2) - 1 ~= 0.4142``:
+
+    * ``t <= a``      -> atan(t) directly;
+    * ``a < t <= 1/a`` -> pi/4 + atan((t-1)/(t+1))  (the fraction is in [-a, a]);
+    * ``t > 1/a``     -> pi/2 - atan(1/t)           (``1/t < a``).
+    """
+    if t == 0:
+        return Decimal(0)
+    a = Decimal(2).sqrt() - 1  # tan(pi/8)
+    if t <= a:
+        return _atan_series(t, prec)
+    if t <= 1 / a:
+        return PI_DEC / 4 + _atan_series((t - 1) / (t + 1), prec)
+    return PI_DEC / 2 - _atan_series(1 / t, prec)
+
+
+def polar_ref(x_q: int, y_q: int) -> tuple[Decimal, Decimal]:
+    """Return ``(atan2(y, x), hypot(x, y))`` of a Q4.28 vector, as Decimals.
+
+    The angle is in radians (real units, range ``(-pi, pi]``; the zero vector
+    reports angle 0) and the magnitude is in the Q4.28 real scale
+    (``sqrt(x**2 + y**2) / 2**28``).  Independent of the CORDIC vector-mode
+    core: quadrant handling by signs, a Decimal atan series, and a Decimal
+    square root.
+    """
+    require_int(x_q, "x_q")
+    require_int(y_q, "y_q")
+    for name, v in (("x_q", x_q), ("y_q", y_q)):
+        if not (INT32_MIN <= v <= INT32_MAX):
+            raise InvalidArgumentTypeError(
+                f"{name}: {v} outside signed 32-bit Q4.28 range "
+                f"[{INT32_MIN}, {INT32_MAX}]"
+            )
+    with localcontext() as ctx:
+        ctx.prec = _REF_PREC
+        x = Decimal(x_q) / SCALE
+        y = Decimal(y_q) / SCALE
+        if x_q == 0 and y_q == 0:
+            angle = Decimal(0)
+        elif x_q > 0:
+            angle = _atan_decimal(abs(y / x), _REF_PREC)
+            if y_q < 0:
+                angle = -angle
+        elif x_q < 0:
+            angle = PI_DEC - _atan_decimal(abs(y / x), _REF_PREC)
+            if y_q < 0:
+                angle = -angle  # -pi + atan(|.|), landing in (-pi, 0)
+        else:  # x == 0, y != 0
+            angle = PI_DEC / 2 if y_q > 0 else -PI_DEC / 2
+        magnitude = (x * x + y * y).sqrt()
+        return +angle, +magnitude

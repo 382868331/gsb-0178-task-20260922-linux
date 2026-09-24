@@ -97,3 +97,25 @@ def q_to_float(q: object) -> float:
     """Convert a Q4.28 integer to the nearest ``float``."""
     q = require_int(q, "q")
     return q / SCALE
+
+
+def mul_q(a: object, b: object) -> int:
+    """Multiply two Q4.28 integers, returning a Q4.28 integer.
+
+    The exact product is ``a * b / 2**28``; the discarded fraction is rounded
+    with ties-to-even (the same rule used for table quantization).  The result
+    is returned as an unbounded integer and is **not** range-checked — callers
+    that must stay in the signed 32-bit envelope (e.g. vector-mode magnitude
+    saturation) apply :func:`check_int32` or their own clamping policy.
+    """
+    a = require_int(a, "mul_q.a")
+    b = require_int(b, "mul_q.b")
+    product = a * b
+    # Python divmod keeps 0 <= rem < SCALE even for negative products, which
+    # makes the ties-to-even decision uniform: round up on rem > 1/2 ulp, and
+    # on an exact tie toward the even quotient.
+    q, rem = divmod(product, SCALE)
+    twice = 2 * rem
+    if twice > SCALE or (twice == SCALE and q & 1):
+        q += 1
+    return q
