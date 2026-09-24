@@ -1,11 +1,17 @@
-"""Fixed-point CORDIC sin/cos with range and error verification (Q4.28).
+"""Fixed-point CORDIC: rotation-mode sin/cos and vectoring-mode atan2/magnitude.
 
 Public API:
 
 * :func:`sin_cos` — 32-step rotation-mode CORDIC on a Q4.28 integer angle.
 * :func:`sin_cos_radians` — same, from a finite float angle in radians.
-* :func:`sin_cos_ref` — independent Decimal Taylor reference (oracle).
-* :class:`CordicResult`, :class:`RoundState` — result/state data structures.
+* :func:`atan2_mag` — 32-step vectoring-mode CORDIC: angle and magnitude of
+  a Q4.28 vector ``(y, x)``.
+* :func:`atan2`, :func:`magnitude` — thin wrappers returning one Q4.28 int.
+* :func:`atan2_mag_radians` — vectoring convenience wrapper from floats.
+* :func:`sin_cos_ref`, :func:`atan2_mag_ref` — independent Decimal
+  references (oracles).
+* :class:`CordicResult`, :class:`Atan2Result`, :class:`RoundState` —
+  result/state data structures.
 * Exceptions: :class:`CordicError` (base), :class:`FixedPointOverflowError`,
   :class:`InvalidArgumentTypeError`, :class:`NonFiniteValueError`,
   :class:`RangeReductionError`.
@@ -13,7 +19,17 @@ Public API:
   ``ATAN_TABLE_Q``, ``GAIN_INV_Q``, ``PI_Q``, ``HALF_PI_Q``, ``ITERATIONS``.
 """
 
-from .cordic import CordicResult, RoundState, sin_cos, sin_cos_radians
+from .cordic import (
+    Atan2Result,
+    CordicResult,
+    RoundState,
+    atan2,
+    atan2_mag,
+    atan2_mag_radians,
+    magnitude,
+    sin_cos,
+    sin_cos_radians,
+)
 from .errors import (
     CordicError,
     FixedPointOverflowError,
@@ -28,17 +44,26 @@ from .fixedpoint import (
     MAX_REAL,
     SCALE,
     float_to_q,
+    mul_q,
     q_to_float,
+    rshift_even,
     sar,
+    saturate_int32,
 )
-from .reference import sin_cos_ref
+from .reference import atan2_mag_ref, sin_cos_ref
 from .tables import ATAN_TABLE_Q, GAIN_INV_Q, HALF_PI_Q, ITERATIONS, PI_DEC, PI_Q, TWO_PI_Q
 
 __all__ = [
     "sin_cos",
     "sin_cos_radians",
+    "atan2_mag",
+    "atan2",
+    "magnitude",
+    "atan2_mag_radians",
     "sin_cos_ref",
+    "atan2_mag_ref",
     "CordicResult",
+    "Atan2Result",
     "RoundState",
     "CordicError",
     "FixedPointOverflowError",
@@ -52,7 +77,10 @@ __all__ = [
     "MAX_REAL",
     "float_to_q",
     "q_to_float",
+    "mul_q",
+    "rshift_even",
     "sar",
+    "saturate_int32",
     "ATAN_TABLE_Q",
     "GAIN_INV_Q",
     "PI_Q",
@@ -62,4 +90,4 @@ __all__ = [
     "ITERATIONS",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

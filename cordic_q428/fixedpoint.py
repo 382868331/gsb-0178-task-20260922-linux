@@ -93,6 +93,65 @@ def float_to_q(value: object, name: str = "value") -> int:
     return check_int32(q, name)
 
 
+def mul_q(a: object, b: object) -> int:
+    """Multiply two Q4.28 integers, quantized ties-to-even.
+
+    The full product is kept in arbitrary-precision integers (it may need up
+    to 63 bits); only the *quantized* result is returned.  The caller is
+    responsible for range-checking the result with :func:`check_int32` if it
+    is committed to a signed 32-bit register.
+    """
+    a = require_int(a, "mul_q.a")
+    b = require_int(b, "mul_q.b")
+    product = a * b
+    # Python >> floors toward -inf, so for negative products the residual is
+    # still in [0, 2**FRAC_BITS); the ties-to-even correction below is
+    # therefore sign-independent.
+    q_floor = product >> FRAC_BITS
+    residual = product - (q_floor << FRAC_BITS)
+    half = 1 << (FRAC_BITS - 1)
+    if residual > half or (residual == half and (q_floor & 1)):
+        return q_floor + 1
+    return q_floor
+
+
+def rshift_even(value: object, shift: object) -> int:
+    """Divide an integer by ``2**shift`` with round-half-to-even.
+
+    Unlike :func:`sar` (which floors, i.e. rounds toward -inf), this is a
+    rounding shift used to undo the vectoring core's input normalization.
+    """
+    value = require_int(value, "rshift_even.value")
+    shift = require_int(shift, "rshift_even.shift")
+    if shift < 0:
+        raise InvalidArgumentTypeError(
+            f"rshift_even.shift: negative shift {shift} is not supported"
+        )
+    if shift == 0:
+        return value
+    q_floor = value >> shift
+    residual = value - (q_floor << shift)
+    half = 1 << (shift - 1)
+    if residual > half or (residual == half and (q_floor & 1)):
+        return q_floor + 1
+    return q_floor
+
+
+def saturate_int32(value: object) -> tuple[int, bool]:
+    """Clamp an integer into the signed 32-bit range; return (value, clipped).
+
+    ``clipped`` is True exactly when saturation occurred.  Used by the
+    vectoring core, whose magnitude register is provably the only datapath
+    register that can leave range for legal inputs.
+    """
+    value = require_int(value, "saturate_int32.value")
+    if value < INT32_MIN:
+        return INT32_MIN, True
+    if value > INT32_MAX:
+        return INT32_MAX, True
+    return value, False
+
+
 def q_to_float(q: object) -> float:
     """Convert a Q4.28 integer to the nearest ``float``."""
     q = require_int(q, "q")
