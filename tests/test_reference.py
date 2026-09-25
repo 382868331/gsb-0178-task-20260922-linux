@@ -26,9 +26,10 @@ class TestReferenceIndependence(unittest.TestCase):
         # and docstrings by tokenizing would be overkill — checking that the
         # math module is never imported in the package suffices, since
         # math.sin/cos/tan are unreachable without it.
+        import cordic_q428.envelope as env
         import cordic_q428.fixedpoint as fp
         import cordic_q428.tables as tb
-        for mod in (fp, tb, reference, cordic):
+        for mod in (fp, tb, reference, cordic, env):
             src = inspect.getsource(mod)
             self.assertNotIn("import math", src, mod.__name__)
             self.assertNotIn("from math", src, mod.__name__)

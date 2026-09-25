@@ -19,6 +19,9 @@ Contract highlights (see README for the full contract):
 * Every register update is range-checked: any value leaving the signed
   32-bit range raises :class:`FixedPointOverflowError`.  Nothing wraps.
 * ``math.sin``/``math.cos`` are never used anywhere in this package.
+* ``sin_cos(..., with_envelope=True)`` attaches a proven integer error
+  envelope (:mod:`cordic_q428.envelope`) without changing any numeric
+  output of the rotation itself.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from dataclasses import dataclass
 from decimal import Decimal, localcontext
 
 from .errors import FixedPointOverflowError, RangeReductionError
+from .envelope import SinCosEnvelope, envelope_for_reduced
 from .fixedpoint import (
     INT32_MAX,
     INT32_MIN,
@@ -69,6 +73,10 @@ class CordicResult:
     independent Decimal Taylor oracle in :mod:`cordic_q428.reference`).
     ``reduced_q`` is the angle after quadrant reduction and ``sign_flip`` is
     +1 or -1, the quadrant sign that was factored out and reapplied.
+    ``envelope`` is ``None`` unless ``sin_cos`` was called with
+    ``with_envelope=True``; when present it is a
+    :class:`cordic_q428.envelope.SinCosEnvelope` — proven integer bounds for
+    sin/cos of the quantized input angle, with per-source error accounting.
     """
 
     sin_q: int
@@ -78,6 +86,7 @@ class CordicResult:
     rounds: tuple[RoundState, ...]
     sin_error: Decimal
     cos_error: Decimal
+    envelope: SinCosEnvelope | None = None
 
     @property
     def sin(self) -> float:
@@ -125,8 +134,14 @@ def _reduce_to_half_pi(angle_q: int) -> tuple[int, int]:
     return reduced, sign
 
 
-def sin_cos(angle_q: int) -> CordicResult:
-    """Compute sin and cos of a Q4.28 angle with 32-step rotation CORDIC."""
+def sin_cos(angle_q: int, *, with_envelope: bool = False) -> CordicResult:
+    """Compute sin and cos of a Q4.28 angle with 32-step rotation CORDIC.
+
+    With ``with_envelope=True`` the result additionally carries a proven
+    integer error envelope (see :mod:`cordic_q428.envelope`).  The switch
+    only adds proof information: the rotation algorithm, the per-round
+    states and every numeric output are bit-identical either way.
+    """
     angle_q = _validate_angle_q(angle_q)
     reduced, sign_flip = _reduce_to_half_pi(angle_q)
 
@@ -159,6 +174,8 @@ def sin_cos(angle_q: int) -> CordicResult:
         sin_err = Decimal(sin_q) / SCALE - ref_sin
         cos_err = Decimal(cos_q) / SCALE - ref_cos
 
+    envelope = envelope_for_reduced(reduced, sign_flip) if with_envelope else None
+
     return CordicResult(
         sin_q=sin_q,
         cos_q=cos_q,
@@ -167,14 +184,20 @@ def sin_cos(angle_q: int) -> CordicResult:
         rounds=tuple(rounds),
         sin_error=+sin_err,
         cos_error=+cos_err,
+        envelope=envelope,
     )
 
 
-def sin_cos_radians(angle: float) -> CordicResult:
+def sin_cos_with_envelope(angle_q: int) -> CordicResult:
+    """``sin_cos(angle_q, with_envelope=True)`` as a named convenience."""
+    return sin_cos(angle_q, with_envelope=True)
+
+
+def sin_cos_radians(angle: float, *, with_envelope: bool = False) -> CordicResult:
     """Convenience wrapper: convert a finite float radian angle to Q4.28 first.
 
     NaN and +/-infinity are rejected (:class:`NonFiniteValueError`); values
     outside ``[-8.0, 8.0)`` raise :class:`FixedPointOverflowError` rather than
-    being silently wrapped.
+    being silently wrapped.  ``with_envelope`` is forwarded to :func:`sin_cos`.
     """
-    return sin_cos(float_to_q(angle, "angle"))
+    return sin_cos(float_to_q(angle, "angle"), with_envelope=with_envelope)

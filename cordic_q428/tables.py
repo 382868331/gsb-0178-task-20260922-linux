@@ -10,6 +10,10 @@ using only the standard-library ``decimal`` module:
   slowly), each quantized to Q4.28 with round-half-to-even.
 * ``GAIN_INV_Q`` — the inverse CORDIC gain ``prod(1/sqrt(1 + 2**-2i))`` over
   the 32 iteration indices, quantized to Q4.28 the same way.
+* ``ATAN_TABLE_DEC`` / ``GAIN_INV_DEC`` — the same quantities kept as
+  80-digit Decimals *before* quantization, exported so
+  :mod:`cordic_q428.envelope` can account for the exact quantization error of
+  every table entry instead of assuming a generic half-ulp bound.
 
 Quantization uses ``ROUND_HALF_EVEN`` (ties-to-even) exactly as specified.
 """
@@ -62,26 +66,28 @@ def _to_q(value: Decimal, where: str) -> int:
     return check_int32(q, where)
 
 
-def _build_tables() -> tuple[Decimal, tuple[int, ...], int]:
+def _build_tables() -> tuple[Decimal, tuple[Decimal, ...], tuple[int, ...], Decimal, int]:
     with localcontext() as ctx:
         ctx.prec = _TABLE_PREC
         pi = _compute_pi(_TABLE_PREC)
+        atan_dec: list[Decimal] = []
         atan_entries: list[int] = []
         for i in range(ITERATIONS):
             if i == 0:
                 angle = pi / 4  # atan(1); the direct series at x=1 converges too slowly
             else:
                 angle = _atan_series(Decimal(1) / (1 << i), _TABLE_PREC)
+            atan_dec.append(+angle)
             atan_entries.append(_to_q(angle, f"atan_table[{i}]"))
         gain_inv = Decimal(1)
         for i in range(ITERATIONS):
             factor = (Decimal(1) + Decimal(2) ** (-2 * i)).sqrt()
             gain_inv /= factor
         gain_inv_q = _to_q(gain_inv, "gain_inverse")
-        return +pi, tuple(atan_entries), gain_inv_q
+        return +pi, tuple(atan_dec), tuple(atan_entries), +gain_inv, gain_inv_q
 
 
-PI_DEC, ATAN_TABLE_Q, GAIN_INV_Q = _build_tables()
+PI_DEC, ATAN_TABLE_DEC, ATAN_TABLE_Q, GAIN_INV_DEC, GAIN_INV_Q = _build_tables()
 
 # Quantized circle constants used by the quadrant reduction, all derived from
 # the same high-precision pi and quantized ties-to-even.
