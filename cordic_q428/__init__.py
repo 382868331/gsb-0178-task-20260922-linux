@@ -2,10 +2,14 @@
 
 Public API:
 
-* :func:`sin_cos` — 32-step rotation-mode CORDIC on a Q4.28 integer angle.
+* :func:`sin_cos` — 32-step rotation-mode CORDIC on a Q4.28 integer angle
+  (``with_envelope=True`` attaches the conservative error envelope).
 * :func:`sin_cos_radians` — same, from a finite float angle in radians.
 * :func:`sin_cos_ref` — independent Decimal Taylor reference (oracle).
+* :func:`compute_envelope` — standalone conservative error-envelope proof.
 * :class:`CordicResult`, :class:`RoundState` — result/state data structures.
+* :class:`EnvelopeResult`, :class:`RoundEnvelope`, :class:`ErrorSources`,
+  :class:`SourceWidth` — envelope proof data structures.
 * Exceptions: :class:`CordicError` (base), :class:`FixedPointOverflowError`,
   :class:`InvalidArgumentTypeError`, :class:`NonFiniteValueError`,
   :class:`RangeReductionError`.
@@ -14,6 +18,13 @@ Public API:
 """
 
 from .cordic import CordicResult, RoundState, sin_cos, sin_cos_radians
+from .envelope import (
+    ErrorSources,
+    EnvelopeResult,
+    RoundEnvelope,
+    SourceWidth,
+    compute_envelope,
+)
 from .errors import (
     CordicError,
     FixedPointOverflowError,
@@ -38,8 +49,13 @@ __all__ = [
     "sin_cos",
     "sin_cos_radians",
     "sin_cos_ref",
+    "compute_envelope",
     "CordicResult",
     "RoundState",
+    "EnvelopeResult",
+    "RoundEnvelope",
+    "ErrorSources",
+    "SourceWidth",
     "CordicError",
     "FixedPointOverflowError",
     "InvalidArgumentTypeError",
