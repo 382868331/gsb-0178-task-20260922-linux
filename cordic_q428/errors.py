@@ -48,3 +48,18 @@ class NonFiniteValueError(CordicError, ValueError):
 
 class RangeReductionError(CordicError, ArithmeticError):
     """Raised if quadrant reduction cannot converge within its fixed budget."""
+
+
+class InputRangeError(CordicError, ValueError):
+    """Raised when an input lies outside the supported domain of a mode.
+
+    Distinct from FixedPointOverflowError: the value may be a
+    perfectly representable Q4.28 integer, but outside the convergence range
+    of the requested mode (e.g. |z| > 1 for the hyperbolic rotation).
+    The input is refused outright; it is never clamped or saturated.
+    """
+
+    def __init__(self, message: str, *, value: object | None = None, where: str | None = None):
+        super().__init__(message)
+        self.value = value
+        self.where = where

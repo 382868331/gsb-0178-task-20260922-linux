@@ -13,10 +13,21 @@ Public API:
   ``ATAN_TABLE_Q``, ``GAIN_INV_Q``, ``PI_Q``, ``HALF_PI_Q``, ``ITERATIONS``.
 """
 
-from .cordic import CordicResult, RoundState, sin_cos, sin_cos_radians
+from .cordic import (
+    HYPER_MAX_Z_Q,
+    CordicResult,
+    HyperCordicResult,
+    HyperRoundState,
+    RoundState,
+    sin_cos,
+    sin_cos_radians,
+    sinh_cosh,
+    sinh_cosh_radians,
+)
 from .errors import (
     CordicError,
     FixedPointOverflowError,
+    InputRangeError,
     InvalidArgumentTypeError,
     NonFiniteValueError,
     RangeReductionError,
@@ -32,16 +43,35 @@ from .fixedpoint import (
     sar,
 )
 from .reference import sin_cos_ref
-from .tables import ATAN_TABLE_Q, GAIN_INV_Q, HALF_PI_Q, ITERATIONS, PI_DEC, PI_Q, TWO_PI_Q
+from .reference import sinh_cosh_ref
+from .tables import (
+    ATAN_TABLE_Q,
+    ATANH_TABLE_Q,
+    GAIN_HYP_INV_Q,
+    GAIN_INV_Q,
+    HALF_PI_Q,
+    HYPER_ITERATIONS,
+    HYPER_REPEAT_INDICES,
+    ITERATIONS,
+    PI_DEC,
+    PI_Q,
+    TWO_PI_Q,
+)
 
 __all__ = [
     "sin_cos",
     "sin_cos_radians",
     "sin_cos_ref",
+    "sinh_cosh",
+    "sinh_cosh_radians",
+    "sinh_cosh_ref",
     "CordicResult",
     "RoundState",
+    "HyperCordicResult",
+    "HyperRoundState",
     "CordicError",
     "FixedPointOverflowError",
+    "InputRangeError",
     "InvalidArgumentTypeError",
     "NonFiniteValueError",
     "RangeReductionError",
@@ -54,7 +84,12 @@ __all__ = [
     "q_to_float",
     "sar",
     "ATAN_TABLE_Q",
+    "ATANH_TABLE_Q",
     "GAIN_INV_Q",
+    "GAIN_HYP_INV_Q",
+    "HYPER_ITERATIONS",
+    "HYPER_REPEAT_INDICES",
+    "HYPER_MAX_Z_Q",
     "PI_Q",
     "HALF_PI_Q",
     "TWO_PI_Q",

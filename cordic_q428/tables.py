@@ -94,3 +94,74 @@ assert len(ATAN_TABLE_Q) == ITERATIONS
 assert all(INT32_MIN <= v <= INT32_MAX for v in ATAN_TABLE_Q)
 # Non-increasing: for i >= 29, atan(2**-i) quantizes to 0 in Q4.28.
 assert all(ATAN_TABLE_Q[i] >= ATAN_TABLE_Q[i + 1] for i in range(ITERATIONS - 1))
+
+
+# ---------------------------------------------------------------------------
+# Hyperbolic mode (rotation): cosh/sinh via atanh(2**-i) micro-rotations.
+#
+# Hyperbolic CORDIC starts at i = 1 (atanh(1) is infinite) and must *repeat*
+# the iterations at i = 4, 13, 40, ... (i_next = 3*i + 1) to converge; the
+# gain product below therefore includes those repeated rounds exactly once
+# extra each.  HYPER_ITERATIONS = 40 so the i = 40 repeat is included.
+# ---------------------------------------------------------------------------
+
+HYPER_ITERATIONS: int = 40
+
+
+def _hyper_repeat_indices(n: int) -> tuple[int, ...]:
+    """Indices i in [1, n] that must be executed twice: 4, 13, 40, ..."""
+    reps: list[int] = []
+    i = 4
+    while i <= n:
+        reps.append(i)
+        i = 3 * i + 1
+    return tuple(reps)
+
+
+HYPER_REPEAT_INDICES: tuple[int, ...] = _hyper_repeat_indices(HYPER_ITERATIONS)
+
+
+def _atanh_series(x: Decimal, prec: int) -> Decimal:
+    """Taylor series atanh(x) = sum x**(2k+1)/(2k+1), converges for |x| < 1."""
+    with localcontext() as ctx:
+        ctx.prec = prec
+        x2 = x * x
+        term = x
+        total = x
+        eps = Decimal(10) ** (-(prec - 10))
+        k = 1
+        while True:
+            term *= x2
+            add = term / (2 * k + 1)
+            total += add
+            if abs(add) < eps:
+                return +total
+            k += 1
+
+
+def _build_hyper_tables() -> tuple[tuple[int, ...], int]:
+    with localcontext() as ctx:
+        ctx.prec = _TABLE_PREC
+        entries: list[int] = []
+        for i in range(1, HYPER_ITERATIONS + 1):
+            angle = _atanh_series(Decimal(1) / (1 << i), _TABLE_PREC)
+            entries.append(_to_q(angle, f"atanh_table[{i}]"))
+        gain_inv = Decimal(1)
+        executed: list[int] = list(range(1, HYPER_ITERATIONS + 1))
+        executed += [i for i in HYPER_REPEAT_INDICES]
+        for i in executed:
+            factor = (Decimal(1) - Decimal(2) ** (-2 * i)).sqrt()
+            gain_inv /= factor
+        gain_inv_q = _to_q(gain_inv, "hyper_gain_inverse")
+        return tuple(entries), gain_inv_q
+
+
+# ATANH_TABLE_Q[k] is atanh(2**-(k+1)) quantized to Q4.28 ties-to-even, so
+# iteration index i (1-based) uses ATANH_TABLE_Q[i - 1].
+ATANH_TABLE_Q, GAIN_HYP_INV_Q = _build_hyper_tables()
+
+# Import-time invariants: a broken hyperbolic table must fail loudly.
+assert len(ATANH_TABLE_Q) == HYPER_ITERATIONS
+assert all(INT32_MIN <= v <= INT32_MAX for v in ATANH_TABLE_Q)
+assert all(ATANH_TABLE_Q[i] >= ATANH_TABLE_Q[i + 1] for i in range(HYPER_ITERATIONS - 1))
+assert HYPER_REPEAT_INDICES == (4, 13, 40)

@@ -72,3 +72,27 @@ def sin_cos_ref(angle_q: int) -> tuple[Decimal, Decimal]:
         angle = Decimal(angle_q) / SCALE
         reduced = _reduce_to_pi(angle)
         return _taylor_sin_cos(reduced, _REF_PREC)
+
+
+def sinh_cosh_ref(z_q: int) -> tuple[Decimal, Decimal]:
+    """Return (sinh, cosh) of the Q4.28 angle z as high-precision Decimals.
+
+    Independent of the CORDIC core: computed directly from the exponential
+    definition, sinh(z) = (e**z - e**-z)/2 and cosh(z) = (e**z + e**-z)/2,
+    using decimal.Decimal.exp at 60-digit precision.  Only |z| <= 1
+    is part of the contract (the hyperbolic core's convergence range).
+    """
+    require_int(z_q, "z_q")
+    if not (INT32_MIN <= z_q <= INT32_MAX):
+        raise InvalidArgumentTypeError(
+            f"z_q: {z_q} outside signed 32-bit Q4.28 range "
+            f"[{INT32_MIN}, {INT32_MAX}]"
+        )
+    with localcontext() as ctx:
+        ctx.prec = _REF_PREC
+        z = Decimal(z_q) / SCALE
+        ez = z.exp()
+        eiz = (-z).exp()
+        sinh = (ez - eiz) / 2
+        cosh = (ez + eiz) / 2
+        return +sinh, +cosh
