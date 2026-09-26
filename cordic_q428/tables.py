@@ -94,3 +94,83 @@ assert len(ATAN_TABLE_Q) == ITERATIONS
 assert all(INT32_MIN <= v <= INT32_MAX for v in ATAN_TABLE_Q)
 # Non-increasing: for i >= 29, atan(2**-i) quantizes to 0 in Q4.28.
 assert all(ATAN_TABLE_Q[i] >= ATAN_TABLE_Q[i + 1] for i in range(ITERATIONS - 1))
+
+
+# ---------------------------------------------------------------------------
+# Hyperbolic CORDIC tables (rotation mode, i starts at 1).
+#
+# Micro-rotations use atanh(2**-i) for i = 1..HYP_ITERATIONS.  To guarantee
+# convergence, the rounds at i = 4, 13, 40, ... (i_next = 3*i + 1) are
+# executed twice; with HYP_ITERATIONS = 32 the repeated indices are (4, 13).
+# The inverse gain HYP_GAIN_INV_Q is the product of 1/sqrt(1 - 2**-2i) over
+# every *executed* micro-rotation, repeats included, so the compensation
+# accounts for the duplicated rounds exactly.
+# ---------------------------------------------------------------------------
+
+HYP_ITERATIONS: int = 32
+
+
+def _hyperbolic_repeat_indices(n: int) -> tuple[int, ...]:
+    """Indices i <= n that must be repeated: 4, 13, 40, ... (i_next = 3i+1)."""
+    reps: list[int] = []
+    i = 4
+    while i <= n:
+        reps.append(i)
+        i = 3 * i + 1
+    return tuple(reps)
+
+
+HYP_REPEAT_INDICES: tuple[int, ...] = _hyperbolic_repeat_indices(HYP_ITERATIONS)
+
+
+def _atanh_series(x: Decimal, prec: int) -> Decimal:
+    """Taylor series atanh(x) = sum x^(2k+1)/(2k+1), converges for |x| < 1."""
+    with localcontext() as ctx:
+        ctx.prec = prec
+        x2 = x * x
+        term = x
+        total = x
+        eps = Decimal(10) ** (-(prec - 10))
+        k = 1
+        while True:
+            term *= x2
+            add = term / (2 * k + 1)
+            total += add
+            if abs(add) < eps:
+                return +total
+            k += 1
+
+
+def _build_hyperbolic() -> tuple[tuple[int, ...], tuple[tuple[int, bool], ...], int]:
+    with localcontext() as ctx:
+        ctx.prec = _TABLE_PREC
+        # Entry [i] holds atanh(2**-i) for i >= 1; entry [0] is an unused
+        # placeholder so the table can be indexed directly by i.
+        entries: list[int] = [0]
+        for i in range(1, HYP_ITERATIONS + 1):
+            angle = _atanh_series(Decimal(1) / (1 << i), _TABLE_PREC)
+            entries.append(_to_q(angle, f"atanh_table[{i}]"))
+        schedule: list[tuple[int, bool]] = []
+        for i in range(1, HYP_ITERATIONS + 1):
+            schedule.append((i, False))
+            if i in HYP_REPEAT_INDICES:
+                schedule.append((i, True))
+        gain_inv = Decimal(1)
+        for i, _repeated in schedule:
+            factor = (Decimal(1) - Decimal(2) ** (-2 * i)).sqrt()
+            gain_inv /= factor
+        gain_inv_q = _to_q(gain_inv, "hyperbolic_gain_inverse")
+        return tuple(entries), tuple(schedule), gain_inv_q
+
+
+ATANH_TABLE_Q, HYP_SCHEDULE, HYP_GAIN_INV_Q = _build_hyperbolic()
+
+# Sanity invariants: broken hyperbolic tables must fail loudly at import.
+assert len(ATANH_TABLE_Q) == HYP_ITERATIONS + 1
+assert ATANH_TABLE_Q[0] == 0
+assert all(INT32_MIN <= v <= INT32_MAX for v in ATANH_TABLE_Q)
+assert all(ATANH_TABLE_Q[i] >= ATANH_TABLE_Q[i + 1] for i in range(1, HYP_ITERATIONS))
+assert HYP_REPEAT_INDICES == (4, 13)  # i_next = 3i+1 with 32 iterations
+assert len(HYP_SCHEDULE) == HYP_ITERATIONS + len(HYP_REPEAT_INDICES)
+assert [i for i, rep in HYP_SCHEDULE if rep] == list(HYP_REPEAT_INDICES)
+

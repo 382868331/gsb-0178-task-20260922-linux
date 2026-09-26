@@ -1,10 +1,12 @@
-"""Fixed-point CORDIC sin/cos with range and error verification (Q4.28).
+"""Fixed-point CORDIC sin/cos and sinh/cosh with range and error verification (Q4.28).
 
 Public API:
 
 * :func:`sin_cos` — 32-step rotation-mode CORDIC on a Q4.28 integer angle.
 * :func:`sin_cos_radians` — same, from a finite float angle in radians.
 * :func:`sin_cos_ref` — independent Decimal Taylor reference (oracle).
+* :func:`sinh_cosh` — hyperbolic rotation-mode CORDIC, |z| <= 1, repeats at i=4,13.
+* :func:`sinh_cosh_ref` — independent Decimal exponential reference (oracle).
 * :class:`CordicResult`, :class:`RoundState` — result/state data structures.
 * Exceptions: :class:`CordicError` (base), :class:`FixedPointOverflowError`,
   :class:`InvalidArgumentTypeError`, :class:`NonFiniteValueError`,
@@ -14,12 +16,14 @@ Public API:
 """
 
 from .cordic import CordicResult, RoundState, sin_cos, sin_cos_radians
+from .hyperbolic import HyperbolicResult, HyperbolicRoundState, Z_MAX_Q, sinh_cosh
 from .errors import (
     CordicError,
     FixedPointOverflowError,
     InvalidArgumentTypeError,
     NonFiniteValueError,
     RangeReductionError,
+    InputRangeError,
 )
 from .fixedpoint import (
     FRAC_BITS,
@@ -31,11 +35,29 @@ from .fixedpoint import (
     q_to_float,
     sar,
 )
-from .reference import sin_cos_ref
-from .tables import ATAN_TABLE_Q, GAIN_INV_Q, HALF_PI_Q, ITERATIONS, PI_DEC, PI_Q, TWO_PI_Q
+from .reference import sin_cos_ref, sinh_cosh_ref
+from .tables import (
+    ATAN_TABLE_Q,
+    ATANH_TABLE_Q,
+    GAIN_INV_Q,
+    HALF_PI_Q,
+    HYP_GAIN_INV_Q,
+    HYP_ITERATIONS,
+    HYP_REPEAT_INDICES,
+    HYP_SCHEDULE,
+    ITERATIONS,
+    PI_DEC,
+    PI_Q,
+    TWO_PI_Q,
+)
 
 __all__ = [
     "sin_cos",
+    "sinh_cosh",
+    "sinh_cosh_ref",
+    "HyperbolicResult",
+    "HyperbolicRoundState",
+    "Z_MAX_Q",
     "sin_cos_radians",
     "sin_cos_ref",
     "CordicResult",
@@ -45,6 +67,7 @@ __all__ = [
     "InvalidArgumentTypeError",
     "NonFiniteValueError",
     "RangeReductionError",
+    "InputRangeError",
     "FRAC_BITS",
     "SCALE",
     "INT32_MIN",
@@ -54,6 +77,11 @@ __all__ = [
     "q_to_float",
     "sar",
     "ATAN_TABLE_Q",
+    "ATANH_TABLE_Q",
+    "HYP_GAIN_INV_Q",
+    "HYP_ITERATIONS",
+    "HYP_REPEAT_INDICES",
+    "HYP_SCHEDULE",
     "GAIN_INV_Q",
     "PI_Q",
     "HALF_PI_Q",
