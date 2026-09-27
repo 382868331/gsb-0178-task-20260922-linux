@@ -15,7 +15,11 @@
 from cordic_q428 import sin_cos, sin_cos_radians, sin_cos_ref
 
 r = sin_cos(angle_q)          # angle_q: int,Q4.28 弧度角,范围 [-2**31, 2**31-1]
+                             # 默认固定 32 步(原始完整计算)
+r = sin_cos(angle_q, tol_ulp=300)          # 允许提前结束:误差以 ulp 计
+r = sin_cos(angle_q, tolerance=1e-7)       # 或:绝对误差按实数单位
 r = sin_cos_radians(1.0)      # 便捷封装:有限 float 弧度 -> Q4.28 -> sin_cos
+                             # 同样接受 tolerance=/tol_ulp= 关键字
 s, c = sin_cos_ref(angle_q)   # 独立 Decimal Taylor 参考(oracle),返回 Decimal
 ```
 
@@ -28,6 +32,23 @@ s, c = sin_cos_ref(angle_q)   # 独立 Decimal Taylor 参考(oracle),返回 Deci
 | `sign_flip` | 规约提取的象限符号(+1/-1) |
 | `rounds` | 32 个 `RoundState(index, direction, x, y, z)` 逐轮状态 |
 | `sin_error`, `cos_error` | Decimal:`输出/2^28 - 高精度参考`,带符号 |
+
+容差模式新增字段(默认模式下也会给出 `error_bound_ulp`,但 `tolerance_met` 为 `None`):
+
+| 字段 | 含义 |
+|---|---|
+| `steps` | 实际执行的轮数(1..32);提前结束时小于 32 |
+| `early_stopped` | 是否在 32 轮之前停止 |
+| `error_bound_ulp` | 可证的每坐标绝对误差上界(精确 `Fraction`,单位 ulp);`error_bound` 属性为实数单位 |
+| `tolerance` | 接受的容差(实数单位 `Fraction`),未给时为 `None` |
+| `tolerance_met` | `True`/`False`/`None`(未给容差时);失败时调用直接抛异常 |
+
+判定规则:每轮结束后用**可证上界**而非相邻两轮输出变化判断。若全部 32 轮(含所有中间轮)
+的最优上界仍不满足容差,抛 `ToleranceNotGuaranteedError`(`steps=32`,异常携带
+`bound` 与完整 32 步 `result`),绝不悄悄放宽。`tolerance` 与 `tol_ulp` 互斥;
+接受 `int`/`float`/`Decimal`/`Fraction`(`tolerance`)或正整数(`tol_ulp`);
+bool、NaN/Infinity、非正值一律拒绝(`InvalidArgumentTypeError`/
+`InvalidArgumentValueError`;其中 NaN/Infinity 抛 `NonFiniteValueError`)。
 
 常量:`SCALE=2**28`、`ATAN_TABLE_Q`(32 项)、`GAIN_INV_Q`、`PI_Q`、`HALF_PI_Q`。
 
@@ -56,11 +77,34 @@ s, c = sin_cos_ref(angle_q)   # 独立 Decimal Taylor 参考(oracle),返回 Deci
   (≈5.1e-8)。扫描是采样而非穷举,demo 中已注明。
 - 由于移位向负无穷取整,+q/-q 输出**不保证精确奇对称**,实测偏差 ≤ 7 ulp。
 
+### 提前终止的可证误差上界
+
+容差模式的判定基于每轮 n 的严格上界,全程用精确 `Fraction` 运算(无浮点舍入),
+组成(均为每坐标、单位 ulp,S=2^28):
+
+- **角度残差**:`|z_n| + n/2`。量化表项与真 atan 之差 ≤ 1/2 ulp,故真角度的理想残差
+  以 `|z_n| + n/2` 为界;未旋转的角度直接映射为同量级的 sin/cos 误差。
+- **移位截断**:每轮两个坐标各有 (-1, 0] ulp 截断(范数 ≤ √2 ulp),经后续轮次
+  以 CORDIC 增益 K_32 ≈ 1.647 放大,取严格有理上界 17/12 · K_32 · n
+  (`√2 < 17/12`,`sqrt(1+t) < 1+t/2` 给出 K 的精确乘积上界)。
+- **增益逆初值量化**:`x0` 与真 1/K_32 之差 ≤ 1/2 ulp,经 n 轮旋转以 K_32 放大。
+- **未补偿增益**:n 轮只施加 K_n,种子却含 1/K_32;相对幅度亏损
+  `K_32/K_n - 1 ≤ ∏_{i=n}^{31}(1+2^{-2i-1}) - 1`,作用在单位向量上。
+- **象限规约**:每次量化 pi 加减与真 pi 之差 ≤ 1/2 ulp,任意 Q4.28 角规约最多
+  3 次,合计 ≤ 3/2 ulp,按角度误差计入。
+
+因此**不会**因为相邻两轮变化很小(表项在 i≥29 时量化为 0,z 完全不变)就宣称收敛。
+上界随 n 非单调(z 可能越过 0),失败时报告所有已到达轮次中的**最优**上界;
+32 步时该上界约 **98.1 ulp**,中间轮最优约 **80.2 ulp**(即当前 Q4.28 表示可保证的
+下限附近)。实测误差仍远小于该保守上界(2001 点扫描最大 13.7 ulp,且有测试断言
+每一点的实际误差不超过当次证明的上界)。
+
 ## 输入上限
 
 - `angle_q`:signed 32-bit 整数,即 [-2147483648, 2147483647](弧度 [-8.0, 8.0))。
 - `sin_cos_radians`:有限 float,|angle| < 8.0;8.0 本身不可表示,触发拒绝。
-- 迭代数固定 32;规约循环预算 8 步(任意可表示角最多需 3 步),耗尽抛
+- 默认迭代数固定 32(不传容差时行为不变);给出容差时可在 1..32 轮间提前结束,
+  无法保证时抛 `ToleranceNotGuaranteedError`。规约循环预算 8 步(任意可表示角最多需 3 步),耗尽抛
   `RangeReductionError`(与溢出是不同异常类型)。
 
 ## 设计取舍
@@ -75,13 +119,15 @@ s, c = sin_cos_ref(angle_q)   # 独立 Decimal Taylor 参考(oracle),返回 Deci
 - 仅实现本题契约的旋转模式 sin/cos;不含向量模式、arctan、双曲 CORDIC,
   不宣称任何行业标准兼容。
 - Q4.28 角度上限 ±8 rad;更大角度需调用方先自行规约(本库拒绝而非回绕)。
+- 可保证误差受 Q4.28 舍入限制:全部 32 轮的最优可证上界约 80.2 ulp;更严容差
+  会被明确拒绝而非放宽。该上界是保守数学界,实测误差约小一个数量级。
 - demo 扫描为固定网格采样,非 2^32 穷举;穷举不在 8 秒演示预算内。
 
 ## 命令
 
 ```bash
-python -m unittest discover -s tests -v   # 运行全部测试(41 项)
-python demo.py                            # 约 1 秒内完成:正常结果 + 扫描 + 拒绝演示
+python -m unittest discover -s tests -v   # 运行全部测试(54 项)
+python demo.py                            # 约 4 秒内完成:正常结果 + 扫描 + 提前终止/拒绝演示
 ```
 
 ## 目录结构

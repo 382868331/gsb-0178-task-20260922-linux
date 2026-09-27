@@ -17,6 +17,7 @@ from cordic_q428 import (
     INT32_MIN,
     SCALE,
     CordicError,
+    ToleranceNotGuaranteedError,
     float_to_q,
     sin_cos,
     sin_cos_radians,
@@ -54,7 +55,24 @@ def main() -> None:
     print("  angles; it is NOT exhaustive. The bound above is observed, not proven.")
 
     print()
-    print("=== 3. Triggered rejections (invalid input is refused, not corrected) ===")
+    print("=== 3. Caller-specified tolerance: early stop vs explicit failure ===")
+    relaxed = sin_cos_radians(1.0, tol_ulp=300)
+    print(f"  tol_ulp=300: stopped after {relaxed.steps} of 32 rounds "
+          f"(early={relaxed.early_stopped}), tolerance_met={relaxed.tolerance_met}")
+    print(f"               proven bound = {float(relaxed.error_bound_ulp):.2f} ulp; "
+          f"actual sin/cos error = "
+          f"{float(relaxed.sin_error) * SCALE:+.2f}/"
+          f"{float(relaxed.cos_error) * SCALE:+.2f} ulp")
+    strict = sin_cos_radians(1.0)  # no tolerance: original full 32-step run
+    print(f"  default:     {strict.steps} rounds (full computation preserved)")
+    try:
+        sin_cos_radians(1.0, tol_ulp=1)  # tighter than Q4.28 can guarantee
+    except ToleranceNotGuaranteedError as exc:
+        print(f"  tol_ulp=1:   refused after {exc.steps} rounds; tightest provable "
+              f"bound = {float(exc.bound * SCALE):.2f} ulp (requirement not relaxed)")
+
+    print()
+    print("=== 4. Triggered rejections (invalid input is refused, not corrected) ===")
     try:
         sin_cos_radians(8.0)  # Q4.28 upper bound is 8.0 - 1 ulp
     except CordicError as exc:

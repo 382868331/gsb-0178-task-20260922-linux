@@ -48,3 +48,26 @@ class NonFiniteValueError(CordicError, ValueError):
 
 class RangeReductionError(CordicError, ArithmeticError):
     """Raised if quadrant reduction cannot converge within its fixed budget."""
+
+
+class InvalidArgumentValueError(CordicError, ValueError):
+    """Raised when an argument has the right type but an invalid value."""
+
+
+class ToleranceNotGuaranteedError(CordicError, ArithmeticError):
+    """Raised when a requested error tolerance cannot be guaranteed.
+
+    All ``ITERATIONS`` rounds are exhausted and the provable error bound
+    (which includes fixed-point round-off, not only round-to-round changes)
+    still exceeds the requested tolerance.  The library fails explicitly
+    instead of silently relaxing the requirement.  ``steps`` is the number
+    of rounds executed, ``bound`` is the proven bound in real units, and
+    ``result`` is the full 32-step :class:`~cordic_q428.cordic.CordicResult`.
+    """
+
+    def __init__(self, message: str, *, steps: int, bound, tolerance, result=None):
+        super().__init__(message)
+        self.steps = steps
+        self.bound = bound
+        self.tolerance = tolerance
+        self.result = result
