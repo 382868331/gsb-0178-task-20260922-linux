@@ -15,11 +15,13 @@ import time
 from cordic_q428 import (
     INT32_MAX,
     INT32_MIN,
+    MIN_GUARANTEED_ERROR_REAL,
     SCALE,
     CordicError,
     float_to_q,
     sin_cos,
     sin_cos_radians,
+    ToleranceNotGuaranteedError,
 )
 
 
@@ -54,7 +56,27 @@ def main() -> None:
     print("  angles; it is NOT exhaustive. The bound above is observed, not proven.")
 
     print()
-    print("=== 3. Triggered rejections (invalid input is refused, not corrected) ===")
+    print("=== 3. Early termination with a certified error tolerance ===")
+    for tol in (1e-4, 1e-5, 1e-6):
+        r = sin_cos_radians(1.0, max_error=tol)
+        actual = max(abs(float(r.sin_error)), abs(float(r.cos_error))) * SCALE
+        print(f"  max_error={tol:.0e}: executed {r.steps_executed:2d}/32 rounds, "
+              f"guarantee_met={r.tolerance_met}, "
+              f"certified bound={float(r.error_bound) * SCALE:.2f} ulp, "
+              f"actual error={actual:.2f} ulp")
+    too_tight = 1e-9
+    print(f"  max_error={too_tight:.0e} is below the Q4.28 resolution:")
+    try:
+        sin_cos_radians(1.0, max_error=too_tight)
+    except ToleranceNotGuaranteedError as exc:
+        print(f"    -> {type(exc).__name__}: smallest provable bound is "
+              f"{float(exc.best_bound):.3e} ({float(exc.best_bound) * SCALE:.1f} ulp) "
+              f"at {exc.steps} rounds; the tolerance is NOT relaxed")
+    print(f"  (smallest attainable certified bound in this format: "
+          f"{float(MIN_GUARANTEED_ERROR_REAL):.3e})")
+
+    print()
+    print("=== 4. Triggered rejections (invalid input is refused, not corrected) ===")
     try:
         sin_cos_radians(8.0)  # Q4.28 upper bound is 8.0 - 1 ulp
     except CordicError as exc:

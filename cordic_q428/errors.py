@@ -48,3 +48,32 @@ class NonFiniteValueError(CordicError, ValueError):
 
 class RangeReductionError(CordicError, ArithmeticError):
     """Raised if quadrant reduction cannot converge within its fixed budget."""
+
+
+class ToleranceNotGuaranteedError(CordicError, ArithmeticError):
+    """Raised when the requested absolute error tolerance cannot be certified.
+
+    Early termination may only be claimed when the library's a-priori
+    fixed-point error bound (which includes residual angle, shift
+    truncation and quantization) is below the caller's tolerance.  If even
+    the best attainable bound over the 32 rounds is larger, this exception
+    is raised: the tolerance is never silently relaxed.
+
+    Attributes:
+        requested_tolerance: the tolerance the caller asked for (real units).
+        best_bound: the smallest provable bound attainable at 32 rounds.
+        steps: number of rounds executed while proving impossibility (32).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        requested_tolerance: object | None = None,
+        best_bound: object | None = None,
+        steps: object | None = None,
+    ):
+        super().__init__(message)
+        self.requested_tolerance = requested_tolerance
+        self.best_bound = best_bound
+        self.steps = steps

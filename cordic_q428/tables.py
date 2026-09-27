@@ -62,26 +62,28 @@ def _to_q(value: Decimal, where: str) -> int:
     return check_int32(q, where)
 
 
-def _build_tables() -> tuple[Decimal, tuple[int, ...], int]:
+def _build_tables() -> tuple[Decimal, tuple[Decimal, ...], tuple[int, ...], int]:
     with localcontext() as ctx:
         ctx.prec = _TABLE_PREC
         pi = _compute_pi(_TABLE_PREC)
+        atan_values: list[Decimal] = []
         atan_entries: list[int] = []
         for i in range(ITERATIONS):
             if i == 0:
                 angle = pi / 4  # atan(1); the direct series at x=1 converges too slowly
             else:
                 angle = _atan_series(Decimal(1) / (1 << i), _TABLE_PREC)
+            atan_values.append(+angle)
             atan_entries.append(_to_q(angle, f"atan_table[{i}]"))
         gain_inv = Decimal(1)
         for i in range(ITERATIONS):
             factor = (Decimal(1) + Decimal(2) ** (-2 * i)).sqrt()
             gain_inv /= factor
         gain_inv_q = _to_q(gain_inv, "gain_inverse")
-        return +pi, tuple(atan_entries), gain_inv_q
+        return +pi, tuple(atan_values), tuple(atan_entries), gain_inv_q
 
 
-PI_DEC, ATAN_TABLE_Q, GAIN_INV_Q = _build_tables()
+PI_DEC, ATAN_TABLE_DEC, ATAN_TABLE_Q, GAIN_INV_Q = _build_tables()
 
 # Quantized circle constants used by the quadrant reduction, all derived from
 # the same high-precision pi and quantized ties-to-even.

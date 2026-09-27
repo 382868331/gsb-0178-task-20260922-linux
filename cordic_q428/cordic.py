@@ -26,7 +26,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 
-from .errors import FixedPointOverflowError, RangeReductionError
+from .bounds import _BOUND_PREC, ERROR_BOUNDS_REAL, MIN_GUARANTEED_ERROR_REAL, MIN_GUARANTEED_ERROR_STEPS
+from .errors import (
+    FixedPointOverflowError,
+    InvalidArgumentTypeError,
+    RangeReductionError,
+    ToleranceNotGuaranteedError,
+)
 from .fixedpoint import (
     INT32_MAX,
     INT32_MIN,
@@ -69,6 +75,13 @@ class CordicResult:
     independent Decimal Taylor oracle in :mod:`cordic_q428.reference`).
     ``reduced_q`` is the angle after quadrant reduction and ``sign_flip`` is
     +1 or -1, the quadrant sign that was factored out and reapplied.
+
+    ``steps_executed`` is the number of rounds actually run (32 for the
+    default full run; fewer when an early-termination tolerance was met).
+    ``error_bound`` is the certified absolute error bound in real units for
+    that output, ``requested_tolerance`` echoes the caller's ``max_error``
+    (``None`` for a default run) and ``tolerance_met`` is the guarantee flag
+    (``True`` with a tolerance, ``None`` without one).
     """
 
     sin_q: int
@@ -78,6 +91,10 @@ class CordicResult:
     rounds: tuple[RoundState, ...]
     sin_error: Decimal
     cos_error: Decimal
+    steps_executed: int
+    tolerance_met: bool | None
+    error_bound: Decimal
+    requested_tolerance: Decimal | None
 
     @property
     def sin(self) -> float:
@@ -86,6 +103,46 @@ class CordicResult:
     @property
     def cos(self) -> float:
         return self.cos_q / SCALE
+
+
+def _coerce_tolerance(max_error: object) -> Decimal:
+    """Validate the caller tolerance and convert it to an exact Decimal.
+
+    Accepted types are int/float/Decimal (``bool`` is rejected like every
+    other integer argument); NaN/infinity and non-positive values are
+    rejected.  A float is converted via ``Decimal(str(...))`` so the exact
+    decimal value the caller wrote is what gets certified.
+    """
+    if isinstance(max_error, bool):
+        raise InvalidArgumentTypeError(
+            f"max_error: bool is not a valid tolerance (got {max_error!r})"
+        )
+    if isinstance(max_error, int):
+        tol = Decimal(max_error)
+    elif isinstance(max_error, float):
+        if max_error != max_error or max_error in (float("inf"), float("-inf")):
+            raise InvalidArgumentTypeError(
+                f"max_error: must be a finite positive number, got {max_error!r}"
+            )
+        tol = Decimal(str(max_error))
+    elif isinstance(max_error, Decimal):
+        if not max_error.is_finite():
+            raise InvalidArgumentTypeError(
+                f"max_error: must be a finite positive number, got {max_error!r}"
+            )
+        tol = max_error
+    else:
+        raise InvalidArgumentTypeError(
+            f"max_error: expected int, float or Decimal, got "
+            f"{type(max_error).__name__} ({max_error!r})"
+        )
+    if tol <= 0:
+        raise InvalidArgumentTypeError(
+            f"max_error: tolerance must be strictly positive, got {tol}"
+        )
+    with localcontext() as ctx:
+        ctx.prec = _BOUND_PREC
+        return +tol
 
 
 def _validate_angle_q(angle_q: object) -> int:
@@ -125,15 +182,41 @@ def _reduce_to_half_pi(angle_q: int) -> tuple[int, int]:
     return reduced, sign
 
 
-def sin_cos(angle_q: int) -> CordicResult:
-    """Compute sin and cos of a Q4.28 angle with 32-step rotation CORDIC."""
+def sin_cos(angle_q: int, *, max_error: object | None = None) -> CordicResult:
+    """Compute sin and cos of a Q4.28 angle with rotation-mode CORDIC.
+
+    By default all ``ITERATIONS`` (32) rounds execute, preserving the
+    original full-computation behavior.  When ``max_error`` is given (an
+    ``int``, ``float`` or ``Decimal`` absolute error tolerance in real
+    units), the datapath stops at the earliest round whose *a-priori*
+    fixed-point error bound (see :mod:`cordic_q428.bounds`) is no larger
+    than the tolerance.  That bound covers residual angle, shift truncation
+    and table/gain quantization; it is never derived from the change
+    between two successive rounds.
+
+    If no number of rounds can certify the requested tolerance, raises
+    :class:`ToleranceNotGuaranteedError` rather than silently relaxing it.
+    """
     angle_q = _validate_angle_q(angle_q)
     reduced, sign_flip = _reduce_to_half_pi(angle_q)
+
+    tolerance = _coerce_tolerance(max_error) if max_error is not None else None
+    if tolerance is not None and tolerance < MIN_GUARANTEED_ERROR_REAL:
+        raise ToleranceNotGuaranteedError(
+            f"requested tolerance {tolerance} is tighter than the smallest "
+            f"provable Q4.28 bound {MIN_GUARANTEED_ERROR_REAL} "
+            f"({+MIN_GUARANTEED_ERROR_REAL * SCALE} ulp); the tolerance was "
+            f"not relaxed and no result is returned",
+            requested_tolerance=tolerance,
+            best_bound=MIN_GUARANTEED_ERROR_REAL,
+            steps=MIN_GUARANTEED_ERROR_STEPS,
+        )
 
     x = GAIN_INV_Q
     y = 0
     z = reduced
     rounds: list[RoundState] = []
+    steps_executed = 0
     for i in range(ITERATIONS):
         d = 1 if z >= 0 else -1
         # Arithmetic shift right, rounding toward -inf, on the *old* values.
@@ -149,9 +232,26 @@ def sin_cos(angle_q: int) -> CordicResult:
             z_new = check_int32(z + ATAN_TABLE_Q[i], f"round[{i}].z")
         x, y, z = x_new, y_new, z_new
         rounds.append(RoundState(index=i, direction=d, x=x, y=y, z=z))
+        steps_executed = i + 1
+        if tolerance is not None and ERROR_BOUNDS_REAL[i] <= tolerance:
+            break
 
     cos_q = check_int32(sign_flip * x, "output.cos")
     sin_q = check_int32(sign_flip * y, "output.sin")
+
+    error_bound = ERROR_BOUNDS_REAL[steps_executed - 1]
+    if tolerance is None:
+        tolerance_met: bool | None = None
+    else:
+        tolerance_met = error_bound <= tolerance
+        if not tolerance_met:
+            raise ToleranceNotGuaranteedError(
+                f"requested tolerance {tolerance} cannot be certified after "
+                f"{steps_executed} rounds; proven bound is {error_bound}",
+                requested_tolerance=tolerance,
+                best_bound=error_bound,
+                steps=steps_executed,
+            )
 
     ref_sin, ref_cos = sin_cos_ref(angle_q)
     with localcontext() as ctx:
@@ -167,14 +267,18 @@ def sin_cos(angle_q: int) -> CordicResult:
         rounds=tuple(rounds),
         sin_error=+sin_err,
         cos_error=+cos_err,
+        steps_executed=steps_executed,
+        tolerance_met=tolerance_met,
+        error_bound=error_bound,
+        requested_tolerance=tolerance,
     )
 
 
-def sin_cos_radians(angle: float) -> CordicResult:
+def sin_cos_radians(angle: float, *, max_error: object | None = None) -> CordicResult:
     """Convenience wrapper: convert a finite float radian angle to Q4.28 first.
 
     NaN and +/-infinity are rejected (:class:`NonFiniteValueError`); values
     outside ``[-8.0, 8.0)`` raise :class:`FixedPointOverflowError` rather than
     being silently wrapped.
     """
-    return sin_cos(float_to_q(angle, "angle"))
+    return sin_cos(float_to_q(angle, "angle"), max_error=max_error)
